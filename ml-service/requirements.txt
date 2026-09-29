@@ -1,0 +1,9 @@
+flask
+flask-cors
+tensorflow-cpu
+scikit-learn
+pandas
+numpy
+requests
+yfinance
+gunicorn

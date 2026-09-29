@@ -1,0 +1,48 @@
+# Render Blueprint — deploys backend, ML service and frontend on the free plan.
+# In Render: New → Blueprint → pick this repo. You'll be asked for the sync:false values.
+services:
+  - type: web
+    name: cryptex-ml
+    runtime: python
+    plan: free
+    region: frankfurt          # non-US region so Binance/yfinance calls aren't geo-blocked
+    rootDir: ml-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 1 --threads 2 --timeout 120
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: TF_CPP_MIN_LOG_LEVEL
+        value: "2"
+
+  - type: web
+    name: cryptex-server
+    runtime: node
+    plan: free
+    region: frankfurt          # Binance blocks US IPs
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: MONGODB_URI
+        sync: false            # paste your NEW Atlas connection string
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        sync: false            # copy the same value you used on Railway
+      - key: FRONTEND_URL
+        sync: false            # e.g. https://cryptex-client.onrender.com
+      - key: ML_URL
+        sync: false            # e.g. https://cryptex-ml.onrender.com
+
+  - type: web
+    name: cryptex-client
+    runtime: static
+    rootDir: client
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        sync: false            # e.g. https://cryptex-server.onrender.com
