@@ -1,7 +1,5 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import tensorflow as tf
-import pickle
 import numpy as np
 import pandas as pd
 import requests
@@ -10,18 +8,68 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-# Load model and scaler
+# ─── Model ─────────────────────────────────────────────────────────────────────
+# The LSTM runs in plain NumPy (no TensorFlow), so it fits in Render's free 512 MB.
+# Weights, scaler and feature list were exported from btc_lstm_model.keras,
+# scaler.pkl and features.pkl into model_weights.npz.
 print("Loading LSTM model...")
-model = tf.keras.models.load_model('btc_lstm_model.keras')
-
-with open('scaler.pkl', 'rb') as f:
-    scaler = pickle.load(f)
-
-with open('features.pkl', 'rb') as f:
-    features = pickle.load(f)
-
+W = dict(np.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'model_weights.npz')))
+features      = [str(f) for f in W['features']]
+SCALER_SCALE  = W['scaler_scale']
+SCALER_MIN    = W['scaler_min']
 print("Model loaded successfully!")
 
+
+def sigmoid(x):
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def lstm(x, name, return_sequences):
+    # Keras LSTM: gates ordered i, f, c, o; activation tanh, recurrent sigmoid
+    kernel, recurrent, bias = W[f'{name}__0'], W[f'{name}__1'], W[f'{name}__2']
+    units = recurrent.shape[0]
+    batch, steps, _ = x.shape
+    h = np.zeros((batch, units), dtype=np.float32)
+    c = np.zeros((batch, units), dtype=np.float32)
+    xw = x @ kernel + bias                      # (batch, steps, 4*units)
+    outputs = []
+    for t in range(steps):
+        z = xw[:, t, :] + h @ recurrent
+        i = sigmoid(z[:, :units])
+        f = sigmoid(z[:, units:2 * units])
+        g = np.tanh(z[:, 2 * units:3 * units])
+        o = sigmoid(z[:, 3 * units:])
+        c = f * c + i * g
+        h = o * np.tanh(c)
+        if return_sequences:
+            outputs.append(h)
+    return np.stack(outputs, axis=1) if return_sequences else h
+
+
+def batch_norm(x, name, eps=1e-3):
+    gamma, beta, mean, var = (W[f'{name}__{k}'] for k in range(4))
+    return gamma * (x - mean) / np.sqrt(var + eps) + beta
+
+
+def dense(x, name):
+    return x @ W[f'{name}__0'] + W[f'{name}__1']
+
+
+def model_predict(X):
+    x = X.astype(np.float32)
+    x = batch_norm(lstm(x, 'lstm',   True),  'batch_normalization')
+    x = batch_norm(lstm(x, 'lstm_1', True),  'batch_normalization_1')
+    x = batch_norm(lstm(x, 'lstm_2', False), 'batch_normalization_2')
+    x = np.maximum(dense(x, 'dense'), 0)        # relu
+    return sigmoid(dense(x, 'dense_1'))         # (batch, 1)
+
+
+def scale(values):
+    # Same as the saved MinMaxScaler.transform
+    return values * SCALER_SCALE + SCALER_MIN
+
+
+# ─── Data ──────────────────────────────────────────────────────────────────────
 def to_binance_symbol(symbol):
     # "BTC-USD" / "BTCUSDT" / "btc" -> "BTCUSDT"
     s = symbol.upper().replace('-', '').replace('/', '')
@@ -69,6 +117,8 @@ def add_indicators(df):
     df['volatility'] = df['returns'].rolling(20).std()
     return df
 
+
+# ─── Routes ────────────────────────────────────────────────────────────────────
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({ 'status': 'ok', 'model': 'LSTM BTC Predictor' })
@@ -88,13 +138,13 @@ def predict():
 
         # Prepare last 60 candles
         latest = df[features].values[-60:]
-        scaled = scaler.transform(latest)
+        scaled = scale(latest)
         X = np.array([scaled])
 
         # Make prediction
-        prediction = model.predict(X, verbose=0)[0][0]
+        prediction = float(model_predict(X)[0][0])
         direction = 'UP' if prediction > 0.5 else 'DOWN'
-        confidence = float(prediction) if prediction > 0.5 else float(1 - prediction)
+        confidence = prediction if prediction > 0.5 else 1 - prediction
 
         current_price = float(df['close'].iloc[-1])
         predicted_change = confidence * 0.02 if direction == 'UP' else -confidence * 0.02
