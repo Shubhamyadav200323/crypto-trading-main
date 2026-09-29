@@ -381,14 +381,25 @@ function TradingPlatform({ token, email, hasKeys, onLogout, onConnectKeys }) {
       setError('Could not fetch candles');
     } finally { setLoading(false); }
   }, [pair, interval]);
+  const [mlStatus, setMlStatus] = useState('loading'); // loading | ok | error
   const loadMLPrediction = useCallback(async () => {
-  try {
-    const data = await fetchMLPrediction(pair);
-    setMlPrediction(data);
-  } catch (_) {}
+    try {
+      const data = await fetchMLPrediction(pair);
+      setMlPrediction(data);
+      setMlStatus('ok');
+    } catch (_) {
+      setMlStatus(prev => (prev === 'ok' ? 'ok' : 'error'));
+    }
   }, [pair]);
 
-  useEffect(() => { loadMLPrediction(); }, [loadMLPrediction]);
+  // Load now, then refresh every 60s (also retries if the free-tier ML service was asleep)
+  useEffect(() => {
+    setMlPrediction(null);
+    setMlStatus('loading');
+    loadMLPrediction();
+    const t = setInterval(loadMLPrediction, 60000);
+    return () => clearInterval(t);
+  }, [loadMLPrediction]);
 
 
   useEffect(() => { loadCandles(); }, [loadCandles]);
@@ -585,6 +596,14 @@ function TradingPlatform({ token, email, hasKeys, onLogout, onConnectKeys }) {
               {/* Prediction */}
               {tab === 'prediction' && prediction && (
                 <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                  {!mlPrediction && (
+                    <div style={{ background: 'rgba(41,98,255,0.1)', border: `1px solid ${C.accent}`, borderRadius: 8, padding: '10px 16px', marginBottom: 12, color: C.muted, fontSize: 12 }}>
+                      <div style={{ fontSize: 10, marginBottom: 4, letterSpacing: 1 }}>LSTM NEURAL NETWORK</div>
+                      {mlStatus === 'error'
+                        ? 'ML model is waking up (free server) — retrying every minute…'
+                        : 'Loading ML prediction… (first load can take up to a minute)'}
+                    </div>
+                  )}
                   {mlPrediction && (
                     <div style={{ background: 'rgba(41,98,255,0.1)', border: `1px solid ${C.accent}`, borderRadius: 8, padding: '10px 16px', marginBottom: 12, display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
                       <div>
