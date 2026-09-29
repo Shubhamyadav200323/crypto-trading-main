@@ -108,10 +108,14 @@ export async function cancelOrder(symbol, orderId, token) {
   if (!res.ok) throw new Error(data.error);
   return data;
 }
+// Call the ML service straight from the browser: a browser request reliably wakes
+// Render's sleeping free service (the ML service has CORS enabled).
+const ML_BASE = import.meta.env.VITE_ML_URL || 'https://cryptex-ml.onrender.com';
+
 export async function fetchMLPrediction(symbol) {
-  const binanceSymbol = symbol.replace('USDT', '-USD');
-  const res = await fetch(`${BASE}/ml/predict?symbol=${binanceSymbol}`);
-  const data = await res.json();
+  const mlSymbol = symbol.replace('USDT', '-USD');
+  const res = await fetch(`${ML_BASE}/predict?symbol=${mlSymbol}`);
+  const data = await res.json();          // throws if Render returns a "waking up" page
   if (!res.ok) throw new Error(data.error);
   return data;
 }
