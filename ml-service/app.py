@@ -22,11 +22,29 @@ with open('features.pkl', 'rb') as f:
 
 print("Model loaded successfully!")
 
-def fetch_recent_data(symbol='BTC-USD'):
-    import yfinance as yf
-    df = yf.download(symbol, period='7d', interval='1h', progress=False)
-    df = df.reset_index()
+def to_binance_symbol(symbol):
+    # "BTC-USD" / "BTCUSDT" / "btc" -> "BTCUSDT"
+    s = symbol.upper().replace('-', '').replace('/', '')
+    if s.endswith('USDT'):
+        return s
+    if s.endswith('USD'):
+        s = s[:-3]
+    return s + 'USDT'
+
+def fetch_recent_data(symbol='BTC-USD', limit=300):
+    # Hourly candles from Binance (yfinance is often blocked/rate-limited on cloud servers)
+    r = requests.get(
+        'https://api.binance.com/api/v3/klines',
+        params={'symbol': to_binance_symbol(symbol), 'interval': '1h', 'limit': limit},
+        timeout=15
+    )
+    r.raise_for_status()
+    rows = r.json()
+    df = pd.DataFrame(rows).iloc[:, :6]
     df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    for c in ['open', 'high', 'low', 'close', 'volume']:
+        df[c] = df[c].astype(float)
     return df
 
 def add_indicators(df):

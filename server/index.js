@@ -56,6 +56,8 @@ app.get('/api/ml/predict', async (req, res) => {
     });
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: 'ML service unavailable' });
+    const detail = err.response?.data?.error || err.message;
+    console.error('❌ ML proxy error:', detail);
+    res.status(502).json({ error: 'ML service unavailable', detail });
   }
 });
